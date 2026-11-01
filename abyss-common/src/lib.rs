@@ -1,14 +1,28 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! # abyss-common
+//!
+//! The shared memory contract between Abyss kernel modules (Ring 0)
+//! and user-space components (daemon, CLI).
+//!
+//! Every type in this crate must:
+//! - Compile under `#![no_std]` (no heap, no `String`, no `Vec`)
+//! - Use `#[repr(C)]` for deterministic C-compatible memory layout
+//! - Derive `Clone, Copy` (required for eBPF map values)
+//!
+//! The crate is organized into domain-specific modules:
+//! - [`telemetry`] — Packet counters and per-packet event structs
+//! - [`rate_limit`] — Map keys/values for the token-bucket rate limiter (abyss-tide)
+//! - [`dpi`] — Signature pattern structs for deep packet inspection (abyss-gaze)
+//! - [`dispatcher`] — Module slot indices and PROG_ARRAY constants (abyss-core)
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#![no_std]
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub mod dispatcher;
+pub mod dpi;
+pub mod rate_limit;
+pub mod telemetry;
+
+// Re-export the most commonly used types at crate root for ergonomic imports.
+pub use dispatcher::{ModuleSlot, ModuleStatus};
+pub use dpi::{DpiAction, DpiSignature, MAX_SIGNATURES, MAX_SIGNATURE_LEN};
+pub use rate_limit::{RateLimitConfig, RateLimitKey, RateLimitValue};
+pub use telemetry::{PacketCounters, PacketEvent, XdpVerdict};
