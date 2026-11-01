@@ -2,5 +2,15 @@
 name = "abyss-common"
 version = "0.1.0"
 edition = "2024"
+description = "Shared #![no_std] data structures for the Abyss eBPF/XDP firewall"
+
+[features]
+default = []
+# Enable this feature in user-space crates (abyss-daemon, abyss-cli) to get
+# aya::Pod implementations for safe map value casting.
+user = ["aya"]
 
 [dependencies]
+# User-space only: provides the Pod trait for safe byte-casting from eBPF maps.
+# Gated behind the "user" feature so kernel targets never see it.
+aya = { version = "0.16", optional = true }
