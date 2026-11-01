@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "abyss-common",
+    "abyss-daemon",
+    "abyss-cli",
+    "kernel-modules/abyss-core",
+    "kernel-modules/abyss-tide",
+    "kernel-modules/abyss-gaze",
+]
