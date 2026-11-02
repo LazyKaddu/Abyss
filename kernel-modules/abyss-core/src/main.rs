@@ -83,18 +83,34 @@ fn try_abyss_dispatcher(ctx: &XdpContext) -> Result<u32, ()> {
     // 1. Parse Ethernet and IP headers safely with bounds checking
     let _parsed = unsafe { parse_packet(start, end)? };
 
-    // 2. Record packet statistics in per-CPU telemetry map (lock-free)
+    // 2. Record received bytes in per-CPU telemetry map (lock-free)
     let packet_len = (end.saturating_sub(start)) as u64;
     if let Some(counters) = PACKET_COUNTERS.get_ptr_mut(0) {
         unsafe {
-            (*counters).packets_passed += 1;
             (*counters).bytes_total += packet_len;
         }
     }
 
-    // 3. Step 2 Baseline: Pass all traffic safely (XDP_PASS)
-    // Downstream steps will engage bpf_tail_call into MODULE_SLOTS
+    // 3. Check if RateLimiter (Slot 0) is enabled and jump via tail call
+    if let Some(status) = MODULE_STATUS.get(ModuleSlot::RateLimiter as u32) {
+        if status.enabled != 0 {
+            // Jump to abyss-tide via tail call
+            unsafe {
+                MODULE_SLOTS.tail_call(ctx, ModuleSlot::RateLimiter as u32);
+            }
+            // Note: tail_call only returns if the slot is unpopulated or invocation failed
+        }
+    }
+
+    // 4. Default fallthrough if no module handled the packet
+    if let Some(counters) = PACKET_COUNTERS.get_ptr_mut(0) {
+        unsafe {
+            (*counters).packets_passed += 1;
+        }
+    }
+
     Ok(xdp_action::XDP_PASS)
+
 }
 
 // ===========================================================================
