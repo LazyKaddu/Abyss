@@ -1,32 +1,60 @@
 //! Integration and unit tests for `abyss-daemon`.
 
+use abyss_daemon::{
+    attach::is_sensitive_interface,
+    config::{Config, XdpMode},
+    telemetry::format_bytes,
+};
 use clap::Parser;
 use std::path::PathBuf;
 
-// Import modules by referencing the bin or library targets
-// Since abyss-daemon has config, attach, and telemetry logic, let's test their public contracts.
-
 #[test]
 fn test_config_defaults() {
-    // Config::parse_from with minimal args
-    // Note: Config has `default_value` attributes
     let args = vec!["abyss-daemon"];
-    // Simulate parsing
-    #[derive(clap::Parser, Debug)]
-    #[command(name = "test")]
-    struct TestConfig {
-        #[arg(short, long, default_value = "veth-abyss")]
-        iface: String,
-        #[arg(short, long, default_value_t = 1000)]
-        poll_interval_ms: u64,
-        #[arg(long, default_value_t = false)]
-        allow_primary_iface: bool,
-    }
+    let config = Config::parse_from(args);
 
-    let config = TestConfig::parse_from(args);
     assert_eq!(config.iface, "veth-abyss");
+    assert_eq!(config.mode, XdpMode::Skb);
     assert_eq!(config.poll_interval_ms, 1000);
     assert!(!config.allow_primary_iface);
+    assert_eq!(config.rate_limit_pps, 1000);
+    assert!(!config.disable_rate_limiter);
+    assert!(config.bytecode.is_none());
+    assert!(config.tide_bytecode.is_none());
+}
+
+#[test]
+fn test_config_rate_limiter_options() {
+    let args = vec![
+        "abyss-daemon",
+        "--rate-limit-pps",
+        "5000",
+        "--disable-rate-limiter",
+    ];
+    let config = Config::parse_from(args);
+
+    assert_eq!(config.rate_limit_pps, 5000);
+    assert!(config.disable_rate_limiter);
+
+    // When disabled, resolve_tide_bytecode_path must return Ok(None)
+    let resolved = config.resolve_tide_bytecode_path().unwrap();
+    assert!(resolved.is_none());
+}
+
+#[test]
+fn test_config_explicit_tide_bytecode_nonexistent() {
+    let args = vec![
+        "abyss-daemon",
+        "--tide-bytecode",
+        "/nonexistent/path/to/abyss-tide",
+    ];
+    let config = Config::parse_from(args);
+
+    let result = config.resolve_tide_bytecode_path();
+    assert!(
+        result.is_err(),
+        "Explicitly specified non-existent tide bytecode must return an error"
+    );
 }
 
 #[test]
@@ -34,8 +62,8 @@ fn test_sensitive_interface_detection() {
     let wifi_names = ["wlan0", "wlp3s0", "wlo1", "wl0"];
     for name in &wifi_names {
         assert!(
-            name.starts_with("wl"),
-            "Interface {} should be recognized as wireless prefix",
+            is_sensitive_interface(name),
+            "Interface {} should be recognized as wireless/sensitive",
             name
         );
     }
@@ -43,8 +71,8 @@ fn test_sensitive_interface_detection() {
     let safe_names = ["veth-abyss", "veth0", "lo", "dummy0"];
     for name in &safe_names {
         assert!(
-            !name.starts_with("wl"),
-            "Interface {} should not be flagged as wireless prefix",
+            !is_sensitive_interface(name),
+            "Interface {} should not be flagged as sensitive",
             name
         );
     }
@@ -52,22 +80,6 @@ fn test_sensitive_interface_detection() {
 
 #[test]
 fn test_format_bytes_utility() {
-    fn format_bytes(bytes: u64) -> String {
-        const KB: u64 = 1024;
-        const MB: u64 = 1024 * KB;
-        const GB: u64 = 1024 * MB;
-
-        if bytes >= GB {
-            format!("{:.2} GB", bytes as f64 / GB as f64)
-        } else if bytes >= MB {
-            format!("{:.2} MB", bytes as f64 / MB as f64)
-        } else if bytes >= KB {
-            format!("{:.2} KB", bytes as f64 / KB as f64)
-        } else {
-            format!("{} B", bytes)
-        }
-    }
-
     assert_eq!(format_bytes(0), "0 B");
     assert_eq!(format_bytes(512), "512 B");
     assert_eq!(format_bytes(1024), "1.00 KB");
