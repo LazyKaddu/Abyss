@@ -35,6 +35,19 @@ pub struct Config {
     #[arg(short, long)]
     pub bytecode: Option<PathBuf>,
 
+    /// Path to the compiled abyss-tide eBPF ELF bytecode binary.
+    /// Defaults to searching standard workspace target directories if unspecified.
+    #[arg(long)]
+    pub tide_bytecode: Option<PathBuf>,
+
+    /// Maximum packets per second (PPS) allowed per source IP for abyss-tide rate limiter.
+    #[arg(long, default_value_t = 1000)]
+    pub rate_limit_pps: u64,
+
+    /// Disable the abyss-tide rate limiter module even if bytecode is present.
+    #[arg(long, default_value_t = false)]
+    pub disable_rate_limiter: bool,
+
     /// Interval in milliseconds between telemetry counter reads from eBPF maps.
     #[arg(short, long, default_value_t = 1000)]
     pub poll_interval_ms: u64,
@@ -80,4 +93,39 @@ impl Config {
             candidates
         );
     }
+
+    /// Resolves the abyss-tide bytecode path.
+    ///
+    /// If `--disable-rate-limiter` is set, returns `Ok(None)`.
+    /// If `--tide-bytecode` is explicitly provided, verifies existence and returns `Ok(Some(path))`.
+    /// Otherwise, checks candidate paths in the workspace and returns `Ok(Some(path))` if found,
+    /// or `Ok(None)` if no bytecode was found.
+    pub fn resolve_tide_bytecode_path(&self) -> anyhow::Result<Option<PathBuf>> {
+        if self.disable_rate_limiter {
+            return Ok(None);
+        }
+
+        if let Some(ref path) = self.tide_bytecode {
+            if path.exists() {
+                return Ok(Some(path.canonicalize().unwrap_or_else(|_| path.clone())));
+            }
+            anyhow::bail!("Specified tide bytecode path does not exist: {}", path.display());
+        }
+
+        let candidates = [
+            PathBuf::from("target/bpfel-unknown-none/release/abyss-tide"),
+            PathBuf::from("../target/bpfel-unknown-none/release/abyss-tide"),
+            PathBuf::from("../../target/bpfel-unknown-none/release/abyss-tide"),
+            PathBuf::from("kernel-modules/abyss-tide/target/bpfel-unknown-none/release/abyss-tide"),
+        ];
+
+        for candidate in &candidates {
+            if candidate.exists() {
+                return Ok(Some(candidate.canonicalize().unwrap_or_else(|_| candidate.clone())));
+            }
+        }
+
+        Ok(None)
+    }
 }
+
