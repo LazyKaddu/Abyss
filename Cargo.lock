@@ -44,6 +44,11 @@ version = "0.1.0"
 [[package]]
 name = "abyss-tide"
 version = "0.1.0"
+dependencies = [
+ "abyss-common",
+ "aya-ebpf",
+ "network-types",
+]
 
 [[package]]
 name = "aho-corasick"
