@@ -27,10 +27,10 @@ pub fn format_bytes(bytes: u64) -> String {
 pub fn aggregate_counters(
     map: &PerCpuArray<MapData, PacketCounters>,
 ) -> Result<PacketCounters> {
-    // PACKET_COUNTERS has a single entry at index 0
+    // Map has a single entry at index 0
     let per_cpu_values = map
         .get(&0, 0)
-        .context("Failed to read index 0 from PACKET_COUNTERS map")?;
+        .context("Failed to read index 0 from per-CPU counter map")?;
 
     let mut total = PacketCounters::default();
     for cpu_val in per_cpu_values.iter() {
@@ -44,18 +44,23 @@ pub fn aggregate_counters(
     Ok(total)
 }
 
-/// Telemetry polling state keeping track of deltas and rates.
+/// Telemetry polling state keeping track of deltas and rates across core and module maps.
 pub struct TelemetryPoller {
-    counters_map: PerCpuArray<MapData, PacketCounters>,
+    core_counters: PerCpuArray<MapData, PacketCounters>,
+    tide_counters: Option<PerCpuArray<MapData, PacketCounters>>,
     last_counters: PacketCounters,
     last_tick: Instant,
 }
 
 impl TelemetryPoller {
-    /// Creates a new poller from the `PACKET_COUNTERS` eBPF map.
-    pub fn new(counters_map: PerCpuArray<MapData, PacketCounters>) -> Self {
+    /// Creates a new poller from the `PACKET_COUNTERS` and optional `TIDE_STATS` eBPF maps.
+    pub fn new(
+        core_counters: PerCpuArray<MapData, PacketCounters>,
+        tide_counters: Option<PerCpuArray<MapData, PacketCounters>>,
+    ) -> Self {
         Self {
-            counters_map,
+            core_counters,
+            tide_counters,
             last_counters: PacketCounters::default(),
             last_tick: Instant::now(),
         }
@@ -63,26 +68,52 @@ impl TelemetryPoller {
 
     /// Reads one tick of counters, logs current totals and throughput rates.
     pub fn poll_once(&mut self) -> Result<PacketCounters> {
-        let current = aggregate_counters(&self.counters_map)?;
+        let core_total = aggregate_counters(&self.core_counters)?;
+        let tide_total = match &self.tide_counters {
+            Some(tide_map) => aggregate_counters(tide_map)?,
+            None => PacketCounters::default(),
+        };
+
+        let current = PacketCounters {
+            packets_passed: core_total.packets_passed + tide_total.packets_passed,
+            packets_dropped: core_total.packets_dropped + tide_total.packets_dropped,
+            bytes_total: core_total.bytes_total.max(tide_total.bytes_total),
+            packets_dropped_rate_limit: core_total.packets_dropped_rate_limit
+                + tide_total.packets_dropped_rate_limit,
+            packets_dropped_dpi: core_total.packets_dropped_dpi + tide_total.packets_dropped_dpi,
+        };
+
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_tick).as_secs_f64();
 
         if elapsed > 0.0 {
-            let delta_passed = current.packets_passed.saturating_sub(self.last_counters.packets_passed);
-            let delta_dropped = current.packets_dropped.saturating_sub(self.last_counters.packets_dropped);
-            let delta_bytes = current.bytes_total.saturating_sub(self.last_counters.bytes_total);
+            let delta_passed = current
+                .packets_passed
+                .saturating_sub(self.last_counters.packets_passed);
+            let delta_dropped = current
+                .packets_dropped
+                .saturating_sub(self.last_counters.packets_dropped);
+            let delta_rate_limit = current
+                .packets_dropped_rate_limit
+                .saturating_sub(self.last_counters.packets_dropped_rate_limit);
+            let delta_bytes = current
+                .bytes_total
+                .saturating_sub(self.last_counters.bytes_total);
+            let delta_ingress = delta_passed + delta_dropped;
 
-            let pps = delta_passed as f64 / elapsed;
-            let drop_pps = delta_dropped as f64 / elapsed;
+            let ingress_pps = delta_ingress as f64 / elapsed;
+            let passed_pps = delta_passed as f64 / elapsed;
+            let dropped_pps = delta_dropped as f64 / elapsed;
+            let rate_limit_pps = delta_rate_limit as f64 / elapsed;
             let bps = delta_bytes as f64 / elapsed;
 
             info!(
-                "[TELEMETRY] Ingress: {:>6.0} pkts/s ({:>8}/s) | Dropped: {:>4.0} pkts/s | Cumulative: {} pkts ({}) | Total Drops: {}",
-                pps,
+                "[TELEMETRY] Ingress: {:>6.0} pkts/s ({:>8}/s) | Passed: {:>6.0} pkts/s | Dropped: {:>4.0} pkts/s (Rate-Limit: {:>4.0} pkts/s) | Total Drops: {}",
+                ingress_pps,
                 format_bytes(bps as u64),
-                drop_pps,
-                current.packets_passed,
-                format_bytes(current.bytes_total),
+                passed_pps,
+                dropped_pps,
+                rate_limit_pps,
                 current.packets_dropped
             );
         }

@@ -25,12 +25,13 @@ pub fn bump_memlock_rlimit() -> Result<()> {
     Ok(())
 }
 
-/// Loads the `abyss-core` eBPF bytecode into the Linux kernel.
+/// Loads an eBPF ELF binary into the Linux kernel.
 ///
 /// Reads the compiled ELF binary, loads all sections into the kernel verifier,
 /// and returns the initialized `Ebpf` handle.
 pub fn load_ebpf_bytecode(path: &Path) -> Result<Ebpf> {
-    info!(path = %path.display(), "Reading abyss-core eBPF bytecode");
+    info!(path = %path.display(), "Reading eBPF bytecode");
+
     let bytecode = std::fs::read(path)
         .with_context(|| format!("Failed to read eBPF bytecode file from {}", path.display()))?;
 
