@@ -1,4 +1,4 @@
-//! Asynchronous telemetry monitor reading eBPF per-CPU maps.
+//! Asynchronous telemetry monitor reading eBPF per-CPU maps across modules.
 
 use abyss_common::telemetry::PacketCounters;
 use anyhow::{Context, Result};
@@ -48,19 +48,22 @@ pub fn aggregate_counters(
 pub struct TelemetryPoller {
     core_counters: PerCpuArray<MapData, PacketCounters>,
     tide_counters: Option<PerCpuArray<MapData, PacketCounters>>,
+    gaze_counters: Option<PerCpuArray<MapData, PacketCounters>>,
     last_counters: PacketCounters,
     last_tick: Instant,
 }
 
 impl TelemetryPoller {
-    /// Creates a new poller from the `PACKET_COUNTERS` and optional `TIDE_STATS` eBPF maps.
+    /// Creates a new poller from `abyss-core`, `abyss-tide`, and `abyss-gaze` counter maps.
     pub fn new(
         core_counters: PerCpuArray<MapData, PacketCounters>,
         tide_counters: Option<PerCpuArray<MapData, PacketCounters>>,
+        gaze_counters: Option<PerCpuArray<MapData, PacketCounters>>,
     ) -> Self {
         Self {
             core_counters,
             tide_counters,
+            gaze_counters,
             last_counters: PacketCounters::default(),
             last_tick: Instant::now(),
         }
@@ -73,14 +76,21 @@ impl TelemetryPoller {
             Some(tide_map) => aggregate_counters(tide_map)?,
             None => PacketCounters::default(),
         };
+        let gaze_total = match &self.gaze_counters {
+            Some(gaze_map) => aggregate_counters(gaze_map)?,
+            None => PacketCounters::default(),
+        };
 
         let current = PacketCounters {
-            packets_passed: core_total.packets_passed + tide_total.packets_passed,
-            packets_dropped: core_total.packets_dropped + tide_total.packets_dropped,
-            bytes_total: core_total.bytes_total.max(tide_total.bytes_total),
+            packets_passed: core_total.packets_passed + tide_total.packets_passed + gaze_total.packets_passed,
+            packets_dropped: core_total.packets_dropped + tide_total.packets_dropped + gaze_total.packets_dropped,
+            bytes_total: core_total.bytes_total.max(tide_total.bytes_total).max(gaze_total.bytes_total),
             packets_dropped_rate_limit: core_total.packets_dropped_rate_limit
-                + tide_total.packets_dropped_rate_limit,
-            packets_dropped_dpi: core_total.packets_dropped_dpi + tide_total.packets_dropped_dpi,
+                + tide_total.packets_dropped_rate_limit
+                + gaze_total.packets_dropped_rate_limit,
+            packets_dropped_dpi: core_total.packets_dropped_dpi
+                + tide_total.packets_dropped_dpi
+                + gaze_total.packets_dropped_dpi,
         };
 
         let now = Instant::now();
@@ -96,6 +106,9 @@ impl TelemetryPoller {
             let delta_rate_limit = current
                 .packets_dropped_rate_limit
                 .saturating_sub(self.last_counters.packets_dropped_rate_limit);
+            let delta_dpi = current
+                .packets_dropped_dpi
+                .saturating_sub(self.last_counters.packets_dropped_dpi);
             let delta_bytes = current
                 .bytes_total
                 .saturating_sub(self.last_counters.bytes_total);
@@ -105,15 +118,17 @@ impl TelemetryPoller {
             let passed_pps = delta_passed as f64 / elapsed;
             let dropped_pps = delta_dropped as f64 / elapsed;
             let rate_limit_pps = delta_rate_limit as f64 / elapsed;
+            let dpi_pps = delta_dpi as f64 / elapsed;
             let bps = delta_bytes as f64 / elapsed;
 
             info!(
-                "[TELEMETRY] Ingress: {:>6.0} pkts/s ({:>8}/s) | Passed: {:>6.0} pkts/s | Dropped: {:>4.0} pkts/s (Rate-Limit: {:>4.0} pkts/s) | Total Drops: {}",
+                "[TELEMETRY] Ingress: {:>6.0} pkts/s ({:>8}/s) | Passed: {:>6.0} pkts/s | Dropped: {:>4.0} pkts/s (Rate-Limit: {:>3.0}/s | DPI: {:>3.0}/s) | Total Drops: {}",
                 ingress_pps,
                 format_bytes(bps as u64),
                 passed_pps,
                 dropped_pps,
                 rate_limit_pps,
+                dpi_pps,
                 current.packets_dropped
             );
         }
