@@ -14,7 +14,7 @@ use core::mem::{align_of, offset_of, size_of};
 
 #[test]
 fn test_packet_counters_offsets_and_alignment() {
-    assert_eq!(size_of::<PacketCounters>(), 40);
+    assert_eq!(size_of::<PacketCounters>(), 48);
     assert_eq!(align_of::<PacketCounters>(), 8);
 
     assert_eq!(offset_of!(PacketCounters, packets_passed), 0);
@@ -22,6 +22,7 @@ fn test_packet_counters_offsets_and_alignment() {
     assert_eq!(offset_of!(PacketCounters, bytes_total), 16);
     assert_eq!(offset_of!(PacketCounters, packets_dropped_rate_limit), 24);
     assert_eq!(offset_of!(PacketCounters, packets_dropped_dpi), 32);
+    assert_eq!(offset_of!(PacketCounters, packets_dropped_blocked), 40);
 }
 
 #[test]
@@ -100,7 +101,8 @@ fn test_packet_counters_raw_bytes_roundtrip() {
         packets_dropped: 42_000,
         bytes_total: 150_000_000,
         packets_dropped_rate_limit: 40_000,
-        packets_dropped_dpi: 2_000,
+        packets_dropped_dpi: 1_000,
+        packets_dropped_blocked: 1_000,
     };
 
     let bytes: [u8; size_of::<PacketCounters>()] = unsafe { core::mem::transmute(original) };
@@ -110,7 +112,8 @@ fn test_packet_counters_raw_bytes_roundtrip() {
     assert_eq!(reconstructed.packets_dropped, 42_000);
     assert_eq!(reconstructed.bytes_total, 150_000_000);
     assert_eq!(reconstructed.packets_dropped_rate_limit, 40_000);
-    assert_eq!(reconstructed.packets_dropped_dpi, 2_000);
+    assert_eq!(reconstructed.packets_dropped_dpi, 1_000);
+    assert_eq!(reconstructed.packets_dropped_blocked, 1_000);
 }
 
 #[test]
