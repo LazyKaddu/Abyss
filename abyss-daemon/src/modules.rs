@@ -64,7 +64,29 @@ impl ModuleBay {
     ) -> Result<()> {
         info!(max_pps, "Configuring abyss-tide rate limiter module");
 
-        // 1. Configure RATE_LIMIT_CFG
+        // 1. Ensure the abyss_tide XDP program is loaded in kernel
+        let prog_fd = {
+            let tide_prog: &mut Xdp = tide_ebpf
+                .program_mut("abyss_tide")
+                .context("XDP program 'abyss_tide' not found in tide eBPF object")?
+                .try_into()
+                .context("Program 'abyss_tide' is not an XDP program")?;
+
+            if tide_prog.fd().is_err() {
+                info!("Loading 'abyss_tide' XDP program into kernel");
+                tide_prog
+                    .load()
+                    .context("Failed to load 'abyss_tide' program into the kernel")?;
+            }
+
+            tide_prog
+                .fd()
+                .context("Failed to obtain file descriptor for 'abyss_tide'")?
+                .try_clone()
+                .context("Failed to clone ProgramFd for 'abyss_tide'")?
+        };
+
+        // 2. Configure RATE_LIMIT_CFG
         if let Some(cfg_map) = tide_ebpf.take_map("RATE_LIMIT_CFG") {
             info!(max_pps, "Writing rate-limit configuration to RATE_LIMIT_CFG");
             let mut cfg_array: Array<_, RateLimitConfig> = Array::try_from(cfg_map)
@@ -81,27 +103,11 @@ impl ModuleBay {
                 .context("Failed to write to RATE_LIMIT_CFG[0]")?;
         }
 
-        // 2. Load the abyss_tide XDP program into kernel
-        let tide_prog: &mut Xdp = tide_ebpf
-            .program_mut("abyss_tide")
-            .context("XDP program 'abyss_tide' not found in tide eBPF object")?
-            .try_into()
-            .context("Program 'abyss_tide' is not an XDP program")?;
-
-        info!("Loading 'abyss_tide' XDP program into kernel");
-        tide_prog
-            .load()
-            .context("Failed to load 'abyss_tide' program into the kernel")?;
-
-        let prog_fd = tide_prog
-            .fd()
-            .context("Failed to obtain file descriptor for 'abyss_tide'")?;
-
         // 3. Insert program FD into core_slots[0] and enable in core_status[0]
         let slot_idx = ModuleSlot::RateLimiter as u32;
         info!(slot = slot_idx, "Inserting abyss-tide FD into dispatch table");
         self.core_slots
-            .set(slot_idx, prog_fd, 0)
+            .set(slot_idx, &prog_fd, 0)
             .context("Failed to populate core MODULE_SLOTS[0]")?;
 
         let status = ModuleStatus {
@@ -126,7 +132,29 @@ impl ModuleBay {
     ) -> Result<()> {
         info!(rules_count = signatures.len(), "Configuring abyss-gaze DPI engine");
 
-        // 1. Populate DPI_SIGNATURES array map in abyss-gaze
+        // 1. Ensure the abyss_gaze XDP program is loaded in kernel
+        let prog_fd = {
+            let gaze_prog: &mut Xdp = gaze_ebpf
+                .program_mut("abyss_gaze")
+                .context("XDP program 'abyss_gaze' not found in gaze eBPF object")?
+                .try_into()
+                .context("Program 'abyss_gaze' is not an XDP program")?;
+
+            if gaze_prog.fd().is_err() {
+                info!("Loading 'abyss_gaze' XDP program into kernel");
+                gaze_prog
+                    .load()
+                    .context("Failed to load 'abyss_gaze' program into the kernel")?;
+            }
+
+            gaze_prog
+                .fd()
+                .context("Failed to obtain file descriptor for 'abyss_gaze'")?
+                .try_clone()
+                .context("Failed to clone ProgramFd for 'abyss_gaze'")?
+        };
+
+        // 2. Populate DPI_SIGNATURES array map in abyss-gaze
         if let Some(sig_map) = gaze_ebpf.take_map("DPI_SIGNATURES") {
             info!(count = signatures.len(), "Loading signature patterns into DPI_SIGNATURES");
             let mut sig_array: Array<_, DpiSignature> = Array::try_from(sig_map)
@@ -144,27 +172,11 @@ impl ModuleBay {
             }
         }
 
-        // 2. Load the abyss_gaze XDP program into kernel
-        let gaze_prog: &mut Xdp = gaze_ebpf
-            .program_mut("abyss_gaze")
-            .context("XDP program 'abyss_gaze' not found in gaze eBPF object")?
-            .try_into()
-            .context("Program 'abyss_gaze' is not an XDP program")?;
-
-        info!("Loading 'abyss_gaze' XDP program into kernel");
-        gaze_prog
-            .load()
-            .context("Failed to load 'abyss_gaze' program into the kernel")?;
-
-        let prog_fd = gaze_prog
-            .fd()
-            .context("Failed to obtain file descriptor for 'abyss_gaze'")?;
-
         // 3. Insert program FD into core_slots[1] (fallback when rate limiter is disabled)
         let slot_idx = ModuleSlot::Dpi as u32;
         info!(slot = slot_idx, "Inserting abyss-gaze FD into core dispatch table");
         self.core_slots
-            .set(slot_idx, prog_fd, 0)
+            .set(slot_idx, &prog_fd, 0)
             .context("Failed to populate core MODULE_SLOTS[1]")?;
 
         let status = ModuleStatus {
@@ -181,7 +193,7 @@ impl ModuleBay {
         if let Some(ref mut tide_slots) = self.tide_slots {
             info!(slot = slot_idx, "Inserting abyss-gaze FD into tide jump table");
             tide_slots
-                .set(slot_idx, prog_fd, 0)
+                .set(slot_idx, &prog_fd, 0)
                 .context("Failed to populate tide MODULE_SLOTS[1]")?;
         }
         if let Some(ref mut tide_status) = self.tide_status {

@@ -82,10 +82,12 @@ pub fn attach_xdp(ebpf: &mut Ebpf, iface: &str, mode: XdpMode) -> Result<XdpAtta
         .try_into()
         .context("Program 'abyss_dispatcher' is not an XDP program")?;
 
-    info!("Loading 'abyss_dispatcher' XDP program into kernel");
-    program
-        .load()
-        .context("Failed to load 'abyss_dispatcher' program into the kernel")?;
+    if program.fd().is_err() {
+        info!("Loading 'abyss_dispatcher' XDP program into kernel");
+        program
+            .load()
+            .context("Failed to load 'abyss_dispatcher' program into the kernel")?;
+    }
 
     let aya_mode = match mode {
         XdpMode::Skb => {

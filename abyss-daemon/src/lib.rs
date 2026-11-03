@@ -7,4 +7,5 @@ pub mod attach;
 pub mod config;
 pub mod loader;
 pub mod modules;
+pub mod pinning;
 pub mod telemetry;

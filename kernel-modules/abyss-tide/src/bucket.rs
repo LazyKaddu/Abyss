@@ -35,13 +35,14 @@ pub fn evaluate_token_bucket(
         state.tokens = max_tokens;
         state.last_refill_ns = now_ns;
     } else if elapsed_ns > 0 {
-        // Fractional refill: compute tokens earned in the elapsed interval
-        // Since elapsed_ns < refill_interval_ns, (elapsed_ns * max_tokens)
-        // is guaranteed to fit in u64 without overflow.
-        let tokens_to_add = (elapsed_ns.saturating_mul(max_tokens)) / refill_interval_ns;
+        // Fractional refill: compute tokens earned in the elapsed interval.
+        // Because elapsed_ns < refill_interval_ns, (elapsed_ns * max_tokens)
+        // is strictly bounded and will never overflow u64.
+        // We use wrapping_mul to avoid LLVM emitting compiler-rt 128-bit `__multi3` helper calls.
+        let tokens_to_add = elapsed_ns.wrapping_mul(max_tokens) / refill_interval_ns;
         if tokens_to_add > 0 {
             state.tokens = core::cmp::min(max_tokens, state.tokens.saturating_add(tokens_to_add));
-            let advance_ns = (tokens_to_add.saturating_mul(refill_interval_ns)) / max_tokens;
+            let advance_ns = tokens_to_add.wrapping_mul(refill_interval_ns) / max_tokens;
             state.last_refill_ns = state.last_refill_ns.saturating_add(advance_ns);
         }
     }

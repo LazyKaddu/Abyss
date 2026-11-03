@@ -27,6 +27,8 @@ pub struct PacketCounters {
     pub packets_dropped_rate_limit: u64,
     /// Packets dropped specifically by DPI inspection (abyss-gaze).
     pub packets_dropped_dpi: u64,
+    /// Packets dropped specifically by the IP blocklist.
+    pub packets_dropped_blocked: u64,
 }
 
 /// The XDP verdict applied to a packet, encoded as a `u8` for compact storage.
@@ -103,8 +105,8 @@ mod tests {
 
     #[test]
     fn packet_counters_layout() {
-        // 5 fields × 8 bytes each = 40 bytes, no padding needed
-        assert_eq!(mem::size_of::<PacketCounters>(), 40);
+        // 6 fields × 8 bytes each = 48 bytes, no padding needed
+        assert_eq!(mem::size_of::<PacketCounters>(), 48);
         assert_eq!(mem::align_of::<PacketCounters>(), 8);
     }
 

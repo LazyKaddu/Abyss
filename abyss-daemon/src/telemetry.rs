@@ -91,6 +91,9 @@ impl TelemetryPoller {
             packets_dropped_dpi: core_total.packets_dropped_dpi
                 + tide_total.packets_dropped_dpi
                 + gaze_total.packets_dropped_dpi,
+            packets_dropped_blocked: core_total.packets_dropped_blocked
+                + tide_total.packets_dropped_blocked
+                + gaze_total.packets_dropped_blocked,
         };
 
         let now = Instant::now();
@@ -109,6 +112,9 @@ impl TelemetryPoller {
             let delta_dpi = current
                 .packets_dropped_dpi
                 .saturating_sub(self.last_counters.packets_dropped_dpi);
+            let delta_blocked = current
+                .packets_dropped_blocked
+                .saturating_sub(self.last_counters.packets_dropped_blocked);
             let delta_bytes = current
                 .bytes_total
                 .saturating_sub(self.last_counters.bytes_total);
@@ -119,16 +125,18 @@ impl TelemetryPoller {
             let dropped_pps = delta_dropped as f64 / elapsed;
             let rate_limit_pps = delta_rate_limit as f64 / elapsed;
             let dpi_pps = delta_dpi as f64 / elapsed;
+            let blocked_pps = delta_blocked as f64 / elapsed;
             let bps = delta_bytes as f64 / elapsed;
 
             info!(
-                "[TELEMETRY] Ingress: {:>6.0} pkts/s ({:>8}/s) | Passed: {:>6.0} pkts/s | Dropped: {:>4.0} pkts/s (Rate-Limit: {:>3.0}/s | DPI: {:>3.0}/s) | Total Drops: {}",
+                "[TELEMETRY] Ingress: {:>6.0} pkts/s ({:>8}/s) | Passed: {:>6.0} pkts/s | Dropped: {:>4.0} pkts/s (Rate-Limit: {:>3.0}/s | DPI: {:>3.0}/s | Blocklist: {:>3.0}/s) | Total Drops: {}",
                 ingress_pps,
                 format_bytes(bps as u64),
                 passed_pps,
                 dropped_pps,
                 rate_limit_pps,
                 dpi_pps,
+                blocked_pps,
                 current.packets_dropped
             );
         }
