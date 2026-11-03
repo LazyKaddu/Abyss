@@ -102,6 +102,16 @@ fn try_abyss_dispatcher(ctx: &XdpContext) -> Result<u32, ()> {
         }
     }
 
+    // 4. Fallback: If RateLimiter is disabled or unpopulated, check if DPI (Slot 1) is enabled
+    if let Some(status) = MODULE_STATUS.get(ModuleSlot::Dpi as u32) {
+        if status.enabled != 0 {
+            unsafe {
+                MODULE_SLOTS.tail_call(ctx, ModuleSlot::Dpi as u32);
+            }
+        }
+    }
+
+
     // 4. Default fallthrough if no module handled the packet
     if let Some(counters) = PACKET_COUNTERS.get_ptr_mut(0) {
         unsafe {
