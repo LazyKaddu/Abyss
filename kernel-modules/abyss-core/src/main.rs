@@ -25,7 +25,7 @@ mod parse;
 use aya_ebpf::{
     bindings::xdp_action,
     macros::{map, xdp},
-    maps::{Array, PerCpuArray, ProgramArray},
+    maps::{Array, HashMap, PerCpuArray, ProgramArray},
     programs::XdpContext,
 };
 use abyss_common::dispatcher::{ModuleSlot, ModuleStatus};
@@ -58,6 +58,13 @@ static MODULE_STATUS: Array<ModuleStatus> = Array::with_max_entries(ModuleSlot::
 #[map(name = "PACKET_COUNTERS")]
 static PACKET_COUNTERS: PerCpuArray<PacketCounters> = PerCpuArray::with_max_entries(1, 0);
 
+/// High-priority blacklist for instant Ring 0 packet drops (`BPF_MAP_TYPE_HASH`).
+///
+/// Key: Source IPv4 address as u32.
+/// Value: 1 = blocked.
+#[map(name = "BLOCKED_IPS")]
+static BLOCKED_IPS: HashMap<u32, u8> = HashMap::with_max_entries(65_536, 0);
+
 // ===========================================================================
 // Root Dispatcher XDP Entry Point
 // ===========================================================================
@@ -81,10 +88,27 @@ fn try_abyss_dispatcher(ctx: &XdpContext) -> Result<u32, ()> {
     let end = ctx.data_end();
 
     // 1. Parse Ethernet and IP headers safely with bounds checking
-    let _parsed = unsafe { parse_packet(start, end)? };
+    let parsed_opt = unsafe { parse_packet(start, end)? };
 
-    // 2. Record received bytes in per-CPU telemetry map (lock-free)
+    // 2. Early Ring 0 IP Blocklist check: immediately drop packets from blacklisted IPs
     let packet_len = (end.saturating_sub(start)) as u64;
+    if let Some(parsed) = parsed_opt {
+        if parsed.src_v4 != 0 {
+            let is_blocked = unsafe { BLOCKED_IPS.get(&parsed.src_v4).is_some() };
+            if is_blocked {
+                if let Some(counters) = PACKET_COUNTERS.get_ptr_mut(0) {
+                    unsafe {
+                        (*counters).bytes_total += packet_len;
+                        (*counters).packets_dropped += 1;
+                        (*counters).packets_dropped_blocked += 1;
+                    }
+                }
+                return Ok(xdp_action::XDP_DROP);
+            }
+        }
+    }
+
+    // 3. Record received bytes in per-CPU telemetry map (lock-free)
     if let Some(counters) = PACKET_COUNTERS.get_ptr_mut(0) {
         unsafe {
             (*counters).bytes_total += packet_len;
