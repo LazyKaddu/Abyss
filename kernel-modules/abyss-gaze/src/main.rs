@@ -26,7 +26,7 @@ use abyss_common::{
 };
 use abyss_gaze::{
     parse::parse_payload,
-    scanner::{match_signature, MAX_ACTIVE_RULES},
+    scanner::{scan_chunk, CHUNK_SIZE, MAX_SCAN_WINDOW},
 };
 
 // ===========================================================================
@@ -74,31 +74,75 @@ fn try_abyss_gaze(ctx: &XdpContext) -> Result<u32, ()> {
         Ok(None) | Err(_) => return Ok(xdp_action::XDP_PASS),
     };
 
+    if payload.offset > 1500 || payload.offset < 14 {
+        return Ok(xdp_action::XDP_PASS);
+    }
+
     let packet_len = (end.saturating_sub(start)) as u64;
 
-    // 2. Scan application payload against active DPI signatures
-    let mut matched_drop = false;
+    // 2. Snapshot payload chunk into stack memory ONCE for all rules (up to 32 bytes)
+    let mut chunk = [0u8; CHUNK_SIZE];
+    let mut chunk_len: usize = 0;
 
-    for idx in 0..MAX_ACTIVE_RULES {
-        let sig = match DPI_SIGNATURES.get(idx) {
-            Some(s) => s,
-            None => break,
-        };
-
-        if sig.pattern_len == 0 {
-            // Unpopulated entry or end of active signature rules
+    for k in 0..MAX_SCAN_WINDOW {
+        let p = (start + payload.offset + k) as *const u8;
+        if (p as usize) + 1 > end {
             break;
         }
+        chunk[k] = unsafe { core::ptr::read_volatile(p) };
+        chunk_len += 1;
+    }
 
-        if match_signature(start, end, payload.offset, payload.len, sig) {
+    if chunk_len == 0 {
+        return Ok(xdp_action::XDP_PASS);
+    }
+
+    // 3. Scan application payload against active DPI signatures
+    let mut matched_drop = false;
+
+    // Rule 0
+    if let Some(sig) = DPI_SIGNATURES.get(0) {
+        if sig.pattern_len > 0 && scan_chunk(&chunk, chunk_len, sig) {
             if sig.action == DpiAction::Drop {
                 matched_drop = true;
-                break;
             }
         }
     }
 
-    // 3. Update telemetry and return verdict
+    // Rule 1
+    if !matched_drop {
+        if let Some(sig) = DPI_SIGNATURES.get(1) {
+            if sig.pattern_len > 0 && scan_chunk(&chunk, chunk_len, sig) {
+                if sig.action == DpiAction::Drop {
+                    matched_drop = true;
+                }
+            }
+        }
+    }
+
+    // Rule 2
+    if !matched_drop {
+        if let Some(sig) = DPI_SIGNATURES.get(2) {
+            if sig.pattern_len > 0 && scan_chunk(&chunk, chunk_len, sig) {
+                if sig.action == DpiAction::Drop {
+                    matched_drop = true;
+                }
+            }
+        }
+    }
+
+    // Rule 3
+    if !matched_drop {
+        if let Some(sig) = DPI_SIGNATURES.get(3) {
+            if sig.pattern_len > 0 && scan_chunk(&chunk, chunk_len, sig) {
+                if sig.action == DpiAction::Drop {
+                    matched_drop = true;
+                }
+            }
+        }
+    }
+
+    // 4. Update telemetry and return verdict
     if matched_drop {
         if let Some(counters) = GAZE_STATS.get_ptr_mut(0) {
             unsafe {

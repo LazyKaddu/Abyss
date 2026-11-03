@@ -49,7 +49,19 @@ async fn main() -> Result<()> {
     let mut core_ebpf = loader::load_ebpf_bytecode(&core_bytecode_path)
         .context("Failed to load abyss-core bytecode into kernel")?;
 
+    // Pre-load abyss_dispatcher program while all maps are still in core_ebpf
+    let core_prog: &mut aya::programs::Xdp = core_ebpf
+        .program_mut("abyss_dispatcher")
+        .context("XDP program 'abyss_dispatcher' not found in core bytecode")?
+        .try_into()
+        .context("Program 'abyss_dispatcher' is not an XDP program")?;
+    core_prog
+        .load()
+        .context("Failed to load 'abyss_dispatcher' program into kernel")?;
+
     if !config.no_pin {
+        // Clean up any stale map pins from prior crashed sessions
+        pinning::unpin_maps(&config.bpf_dir);
         let _ = pinning::pin_maps_for_ebpf(&core_ebpf, &config.bpf_dir);
     }
 
@@ -65,6 +77,16 @@ async fn main() -> Result<()> {
         info!(path = %tide_path.display(), "Loading abyss-tide rate limiter module");
         let mut tide = loader::load_ebpf_bytecode(tide_path)
             .context("Failed to load abyss-tide bytecode into kernel")?;
+
+        // Pre-load abyss_tide program while all maps are still in tide
+        let tide_prog: &mut aya::programs::Xdp = tide
+            .program_mut("abyss_tide")
+            .context("XDP program 'abyss_tide' not found in tide bytecode")?
+            .try_into()
+            .context("Program 'abyss_tide' is not an XDP program")?;
+        tide_prog
+            .load()
+            .context("Failed to load 'abyss_tide' program into kernel")?;
 
         if !config.no_pin {
             let _ = pinning::pin_maps_for_ebpf(&tide, &config.bpf_dir);
@@ -104,6 +126,16 @@ async fn main() -> Result<()> {
         info!(path = %gaze_path.display(), "Loading abyss-gaze DPI module");
         let mut gaze = loader::load_ebpf_bytecode(gaze_path)
             .context("Failed to load abyss-gaze bytecode into kernel")?;
+
+        // Pre-load abyss_gaze program while all maps are still in gaze
+        let gaze_prog: &mut aya::programs::Xdp = gaze
+            .program_mut("abyss_gaze")
+            .context("XDP program 'abyss_gaze' not found in gaze bytecode")?
+            .try_into()
+            .context("Program 'abyss_gaze' is not an XDP program")?;
+        gaze_prog
+            .load()
+            .context("Failed to load 'abyss_gaze' program into kernel")?;
 
         if !config.no_pin {
             let _ = pinning::pin_maps_for_ebpf(&gaze, &config.bpf_dir);

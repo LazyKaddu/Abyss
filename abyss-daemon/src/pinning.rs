@@ -24,7 +24,8 @@ pub fn pin_maps_for_ebpf(ebpf: &Ebpf, bpf_dir: &Path) -> Result<()> {
         }
         let pin_path = bpf_dir.join(name);
         if pin_path.exists() {
-            let _ = std::fs::remove_file(&pin_path);
+            // Map already pinned by a previous module (e.g. MODULE_SLOTS / MODULE_STATUS by core)
+            continue;
         }
         info!(map = name, path = %pin_path.display(), "Pinning eBPF map to bpffs");
         if let Err(e) = map.pin(&pin_path) {
