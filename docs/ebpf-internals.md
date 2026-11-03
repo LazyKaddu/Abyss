@@ -127,3 +127,4 @@ In eBPF, `bpf_tail_call()` jumps to another program stored in a `BPF_MAP_TYPE_PR
   module_slots.set(slot_index, fd, 0)?;
   ```
 - This preserves the file descriptor in kernel space across program reloads and daemon updates.
+

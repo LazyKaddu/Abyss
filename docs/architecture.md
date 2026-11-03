@@ -134,3 +134,4 @@ Because kernel-space and user-space run in completely isolated memory environmen
 | `RATE_LIMIT_CFG` | `Array` | `u32` | `RateLimitConfig` | 1 | Global rate limit parameters |
 | `RATE_LIMIT_TABLE` | `LruHashMap` | `RateLimitKey` | `RateLimitValue` | 65536 | Per-IP token bucket tracking |
 | `DPI_SIGNATURES` | `Array` | `u32` | `DpiSignature` | 16 | Loaded L7 attack signatures |
+
