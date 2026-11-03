@@ -19,6 +19,7 @@ use abyss_daemon::{
     config::Config,
     loader,
     modules::ModuleBay,
+    pinning,
     telemetry::{self, TelemetryPoller},
 };
 
@@ -48,6 +49,10 @@ async fn main() -> Result<()> {
     let mut core_ebpf = loader::load_ebpf_bytecode(&core_bytecode_path)
         .context("Failed to load abyss-core bytecode into kernel")?;
 
+    if !config.no_pin {
+        let _ = pinning::pin_maps_for_ebpf(&core_ebpf, &config.bpf_dir);
+    }
+
     // 4. Optionally load abyss-tide rate limiter module
     let tide_bytecode_path = config
         .resolve_tide_bytecode_path()
@@ -60,6 +65,10 @@ async fn main() -> Result<()> {
         info!(path = %tide_path.display(), "Loading abyss-tide rate limiter module");
         let mut tide = loader::load_ebpf_bytecode(tide_path)
             .context("Failed to load abyss-tide bytecode into kernel")?;
+
+        if !config.no_pin {
+            let _ = pinning::pin_maps_for_ebpf(&tide, &config.bpf_dir);
+        }
 
         if let Some(tide_stats_map) = tide.take_map("TIDE_STATS") {
             let stats: PerCpuArray<_, abyss_common::telemetry::PacketCounters> =
@@ -95,6 +104,10 @@ async fn main() -> Result<()> {
         info!(path = %gaze_path.display(), "Loading abyss-gaze DPI module");
         let mut gaze = loader::load_ebpf_bytecode(gaze_path)
             .context("Failed to load abyss-gaze bytecode into kernel")?;
+
+        if !config.no_pin {
+            let _ = pinning::pin_maps_for_ebpf(&gaze, &config.bpf_dir);
+        }
 
         if let Some(gaze_stats_map) = gaze.take_map("GAZE_STATS") {
             let stats: PerCpuArray<_, abyss_common::telemetry::PacketCounters> =
@@ -165,15 +178,21 @@ async fn main() -> Result<()> {
         error!("Error during XDP detachment: {e}");
     }
 
+    // 11. Cleanup pinned bpffs maps if pinning was enabled
+    if !config.no_pin {
+        pinning::unpin_maps(&config.bpf_dir);
+    }
+
     // 11. Final flush of metrics
     if let Ok(final_stats) = poller.poll_once() {
         info!(
-            "Session Summary: Processed {} packets ({}) | Dropped: {} packets (Rate-Limit: {} | DPI: {})",
+            "Session Summary: Processed {} packets ({}) | Dropped: {} packets (Rate-Limit: {} | DPI: {} | Blocklist: {})",
             final_stats.packets_passed,
             telemetry::format_bytes(final_stats.bytes_total),
             final_stats.packets_dropped,
             final_stats.packets_dropped_rate_limit,
-            final_stats.packets_dropped_dpi
+            final_stats.packets_dropped_dpi,
+            final_stats.packets_dropped_blocked
         );
     }
 

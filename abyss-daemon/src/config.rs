@@ -65,6 +65,14 @@ pub struct Config {
     #[arg(long, default_value_t = false)]
     pub no_default_signatures: bool,
 
+    /// Base directory in bpffs where active eBPF maps are pinned for abyssctl.
+    #[arg(long, default_value = "/sys/fs/bpf/abyss")]
+    pub bpf_dir: PathBuf,
+
+    /// Disable pinning active eBPF maps to bpffs.
+    #[arg(long, default_value_t = false)]
+    pub no_pin: bool,
+
     /// Interval in milliseconds between telemetry counter reads from eBPF maps.
     #[arg(short, long, default_value_t = 1000)]
     pub poll_interval_ms: u64,
