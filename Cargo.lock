@@ -40,6 +40,11 @@ dependencies = [
 [[package]]
 name = "abyss-gaze"
 version = "0.1.0"
+dependencies = [
+ "abyss-common",
+ "aya-ebpf",
+ "network-types",
+]
 
 [[package]]
 name = "abyss-tide"

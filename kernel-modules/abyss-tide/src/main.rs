@@ -17,10 +17,11 @@ use aya_ebpf::{
     bindings::xdp_action,
     helpers::bpf_ktime_get_ns,
     macros::{map, xdp},
-    maps::{Array, LruHashMap, PerCpuArray},
+    maps::{Array, LruHashMap, PerCpuArray, ProgramArray},
     programs::XdpContext,
 };
 use abyss_common::{
+    dispatcher::{ModuleSlot, ModuleStatus},
     rate_limit::{RateLimitConfig, RateLimitKey, RateLimitValue, MAX_TRACKED_IPS},
     telemetry::PacketCounters,
 };
@@ -29,6 +30,14 @@ use abyss_tide::{bucket::evaluate_token_bucket, parse::parse_ipv4_src};
 // ===========================================================================
 // eBPF Maps
 // ===========================================================================
+
+/// Downstream jump table for module pipeline chaining (`BPF_MAP_TYPE_PROG_ARRAY`).
+#[map(name = "MODULE_SLOTS")]
+static MODULE_SLOTS: ProgramArray = ProgramArray::with_max_entries(ModuleSlot::COUNT, 0);
+
+/// Per-module runtime status flags (`BPF_MAP_TYPE_ARRAY`).
+#[map(name = "MODULE_STATUS")]
+static MODULE_STATUS: Array<ModuleStatus> = Array::with_max_entries(ModuleSlot::COUNT, 0);
 
 /// Per-IP token bucket state tracking (`BPF_MAP_TYPE_LRU_HASH`).
 ///
@@ -122,10 +131,20 @@ fn try_abyss_tide(ctx: &XdpContext) -> Result<u32, ()> {
     }
 
     if allowed {
+        // If downstream Deep Packet Inspection (Slot 1) is enabled, chain into abyss-gaze
+        if let Some(status) = MODULE_STATUS.get(ModuleSlot::Dpi as u32) {
+            if status.enabled != 0 {
+                unsafe {
+                    MODULE_SLOTS.tail_call(ctx, ModuleSlot::Dpi as u32);
+                }
+                // Only falls through if Slot 1 is unpopulated or invocation failed
+            }
+        }
         Ok(xdp_action::XDP_PASS)
     } else {
         Ok(xdp_action::XDP_DROP)
     }
+
 }
 
 // ===========================================================================
